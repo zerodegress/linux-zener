@@ -3771,7 +3771,7 @@ static int asus_wmi_platform_profile_get(struct platform_profile_handler *pprof,
 		*profile = PLATFORM_PROFILE_PERFORMANCE;
 		break;
 	case ASUS_THROTTLE_THERMAL_POLICY_SILENT:
-		*profile = PLATFORM_PROFILE_QUIET;
+		*profile = PLATFORM_PROFILE_LOW_POWER;
 		break;
 	default:
 		return -EINVAL;
@@ -3795,7 +3795,7 @@ static int asus_wmi_platform_profile_set(struct platform_profile_handler *pprof,
 	case PLATFORM_PROFILE_BALANCED:
 		tp = ASUS_THROTTLE_THERMAL_POLICY_DEFAULT;
 		break;
-	case PLATFORM_PROFILE_QUIET:
+	case PLATFORM_PROFILE_LOW_POWER:
 		tp = ASUS_THROTTLE_THERMAL_POLICY_SILENT;
 		break;
 	default:
