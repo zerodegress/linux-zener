@@ -27,6 +27,7 @@
 #include <linux/hid.h>
 #include <linux/module.h>
 #include <linux/platform_data/x86/asus-wmi.h>
+#include <linux/platform_device.h>
 #include <linux/input/mt.h>
 #include <linux/usb.h> /* For to_usb_interface for T100 touchpad intf check */
 #include <linux/power_supply.h>
@@ -594,6 +595,8 @@ out:
 static void mcu_maybe_warn_version(struct hid_device *hdev, int idProduct)
 {
 	int min_version, version;
+	struct asus_wmi *asus;
+	struct device *dev;
 
 	min_version = ROG_ALLY_X_MIN_MCU;
 	version = mcu_request_version(hdev);
@@ -614,6 +617,15 @@ static void mcu_maybe_warn_version(struct hid_device *hdev, int idProduct)
 			 "The MCU version must be %d or greater\n"
 			 "Please update your MCU with official ASUS firmware release\n",
 			 min_version);
+		/* Get the asus platform device */
+		dev = bus_find_device_by_name(&platform_bus_type, NULL, "asus-nb-wmi");
+		if (dev) {
+			asus = dev_get_drvdata(dev);
+			/* Do not show the powersave attribute if MCU version too low */
+			if (asus)
+				asus->mcu_powersave_available = false;
+			put_device(dev);
+		}
 	}
 }
 
