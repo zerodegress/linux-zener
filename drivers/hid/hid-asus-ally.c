@@ -380,6 +380,7 @@ static struct ally_drvdata {
 	struct ally_gamepad_cfg *gamepad_cfg;
 	struct ally_rgb_dev *led_rgb_dev;
 	struct ally_rgb_data led_rgb_data;
+	uint mcu_version;
 } drvdata;
 
 /**
@@ -1184,6 +1185,13 @@ static ssize_t gamepad_mode_store(struct device *dev, struct device_attribute *a
 
 DEVICE_ATTR_RW(gamepad_mode);
 
+static ssize_t gamepad_mode_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	return sysfs_emit(buf, "%d\n", drvdata.version);
+}
+
++DEVICE_ATTR_RO(mcu_version);
+
 /* ROOT LEVEL ATTRS *******************************************************************************/
 static struct attribute *gamepad_device_attrs[] = {
 	&dev_attr_btn_mapping_reset.attr,
@@ -1191,6 +1199,7 @@ static struct attribute *gamepad_device_attrs[] = {
 	&dev_attr_gamepad_apply_all.attr,
 	&dev_attr_gamepad_vibration_intensity.attr,
 	&dev_attr_gamepad_vibration_intensity_index.attr,
+	&dev_attr_mcu_version.attr,
 	NULL
 };
 
@@ -1937,6 +1946,7 @@ static void mcu_maybe_warn_version(struct hid_device *hdev, int idProduct)
 
 	min_version = ROG_ALLY_X_MIN_MCU;
 	version = mcu_request_version(hdev);
+	drvdata.version = version;
 	if (version) {
 		switch (idProduct) {
 		case USB_DEVICE_ID_ASUSTEK_ROG_NKEY_ALLY:
