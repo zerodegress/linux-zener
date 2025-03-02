@@ -34,6 +34,7 @@
 #include <linux/leds.h>
 
 #include "hid-ids.h"
+#include "hid-asus-ally.h"
 
 MODULE_AUTHOR("Yusuke Fujimaki <usk.fujimaki@gmail.com>");
 MODULE_AUTHOR("Brendan McGrath <redmcg@redmandi.dyndns.org>");
@@ -53,9 +54,9 @@ MODULE_DESCRIPTION("Asus HID Keyboard and TouchPad");
 #define FEATURE_KBD_LED_REPORT_ID1 0x5d
 #define FEATURE_KBD_LED_REPORT_ID2 0x5e
 
-#define ROG_ALLY_CFG_INTF_IN 0x83
-#define ROG_ALLY_CFG_INTF_OUT 0x04
-#define ROG_ALLY_X_INTF_IN 0x87
+#define ROG_ALLY_REPORT_SIZE 64
+#define ROG_ALLY_X_MIN_MCU 313
+#define ROG_ALLY_MIN_MCU 319
 
 #define SUPPORT_KBD_BACKLIGHT BIT(0)
 

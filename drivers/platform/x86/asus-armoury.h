@@ -626,7 +626,13 @@ static const struct dmi_system_id power_limits[] = {
 				.ppt_pl2_sppt_min = 25,
 				.ppt_pl2_sppt_max = 80,
 				.ppt_pl3_fppt_min = 35,
-				.ppt_pl3_fppt_max = 80
+				.ppt_pl3_fppt_max = 80,
+				.nv_dynamic_boost_min = 5,
+				.nv_dynamic_boost_max = 25,
+				.nv_temp_target_min = 75,
+				.nv_temp_target_max = 87,
+				.nv_tgp_min = 55,
+				.nv_tgp_max = 65,
 			},
 			.dc_data = &(struct power_limits) {
 				.ppt_pl1_spl_min = 15,
@@ -634,7 +640,9 @@ static const struct dmi_system_id power_limits[] = {
 				.ppt_pl2_sppt_min = 25,
 				.ppt_pl2_sppt_max = 35,
 				.ppt_pl3_fppt_min = 35,
-				.ppt_pl3_fppt_max = 65
+				.ppt_pl3_fppt_max = 65,
+				.nv_temp_target_min = 75,
+				.nv_temp_target_max = 87,
 			},
 			.requires_fan_curve = true,
 		},
@@ -779,6 +787,20 @@ static const struct dmi_system_id power_limits[] = {
 				.nv_temp_target_max = 87,
 			},
 			.requires_fan_curve = true,
+		},
+	},
+	{
+		.matches = {
+			DMI_MATCH(DMI_BOARD_NAME, "GV301Q"),
+		},
+		.driver_data = &(struct power_data) {
+			.ac_data = &(struct power_limits) {
+				.ppt_pl1_spl_min = 15,
+				.ppt_pl1_spl_max = 45,
+				.ppt_pl2_sppt_min = 65,
+				.ppt_pl2_sppt_max = 80,
+			},
+			.dc_data = NULL
 		},
 	},
 	{
@@ -1040,6 +1062,39 @@ static const struct dmi_system_id power_limits[] = {
 				.ppt_pl1_spl_max = 35,
 				.ppt_pl2_sppt_min = 28,
 				.ppt_pl2_sppt_max = 35,
+				.nv_temp_target_min = 75,
+				.nv_temp_target_max = 87,
+			},
+			.requires_fan_curve = true,
+		},
+	},
+	{
+		.matches = {
+			DMI_MATCH(DMI_BOARD_NAME, "G733P"),
+		},
+		.driver_data = &(struct power_data) {
+			.ac_data = &(struct power_limits) {
+				.ppt_pl1_spl_min = 30,
+				.ppt_pl1_spl_def = 100,
+				.ppt_pl1_spl_max = 130,
+				.ppt_pl2_sppt_min = 65,
+				.ppt_pl2_sppt_def = 125,
+				.ppt_pl2_sppt_max = 130,
+				.ppt_pl3_fppt_min = 65,
+				.ppt_pl3_fppt_def = 125,
+				.ppt_pl3_fppt_max = 130,
+				.nv_temp_target_min = 75,
+				.nv_temp_target_max = 87,
+				.nv_dynamic_boost_min = 5,
+				.nv_dynamic_boost_max = 25,
+			},
+			.dc_data = &(struct power_limits) {
+				.ppt_pl1_spl_min = 25,
+				.ppt_pl1_spl_max = 65,
+				.ppt_pl2_sppt_min = 25,
+				.ppt_pl2_sppt_max = 65,
+				.ppt_pl3_fppt_min = 35,
+				.ppt_pl3_fppt_max = 75,
 				.nv_temp_target_min = 75,
 				.nv_temp_target_max = 87,
 			},

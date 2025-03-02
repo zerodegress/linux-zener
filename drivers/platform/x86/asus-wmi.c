@@ -138,11 +138,20 @@ module_param(fnlock_default, bool, 0444);
 #define ASUS_MINI_LED_2024_STRONG	0x01
 #define ASUS_MINI_LED_2024_OFF		0x02
 
+#define ASUS_USB0_PWR_EC0_CSEE "\\_SB.PCI0.SBRG.EC0.CSEE"
+/*
+ * The period required to wait after screen off/on/s2idle.check in MS.
+ * Time here greatly impacts the wake behaviour. Used in suspend/wake.
+ */
+#define ASUS_USB0_PWR_EC0_CSEE_WAIT	600
+#define ASUS_USB0_PWR_EC0_CSEE_OFF	0xB7
+#define ASUS_USB0_PWR_EC0_CSEE_ON	0xB8
+
 static const char * const ashs_ids[] = { "ATK4001", "ATK4002", NULL };
 
 static int throttle_thermal_policy_write(struct asus_wmi *);
 
-static const struct dmi_system_id asus_ally_mcu_quirk[] = {
+static const struct dmi_system_id asus_rog_ally_device[] = {
 	{
 		.matches = {
 			DMI_MATCH(DMI_BOARD_NAME, "RC71L"),
@@ -193,6 +202,138 @@ struct agfn_fan_args {
 	u8 fan;			/* fan number: 0: set auto mode 1: 1st fan */
 	u32 speed;		/* read: RPM/100 - write: 0-255 */
 } __packed;
+
+/*
+ * <platform>/    - debugfs root directory
+ *   dev_id      - current dev_id
+ *   ctrl_param  - current ctrl_param
+ *   method_id   - current method_id
+ *   devs        - call DEVS(dev_id, ctrl_param) and print result
+ *   dsts        - call DSTS(dev_id)  and print result
+ *   call        - call method_id(dev_id, ctrl_param) and print result
+ */
+struct asus_wmi_debug {
+	struct dentry *root;
+	u32 method_id;
+	u32 dev_id;
+	u32 ctrl_param;
+};
+
+struct asus_rfkill {
+	struct asus_wmi *asus;
+	struct rfkill *rfkill;
+	u32 dev_id;
+};
+
+enum fan_type {
+	FAN_TYPE_NONE = 0,
+	FAN_TYPE_AGFN,		/* deprecated on newer platforms */
+	FAN_TYPE_SPEC83,	/* starting in Spec 8.3, use CPU_FAN_CTRL */
+};
+
+struct fan_curve_data {
+	bool enabled;
+	u32 device_id;
+	u8 temps[FAN_CURVE_POINTS];
+	u8 percents[FAN_CURVE_POINTS];
+};
+
+struct asus_wmi {
+	int dsts_id;
+	int spec;
+	int sfun;
+
+	struct input_dev *inputdev;
+	struct backlight_device *backlight_device;
+	struct backlight_device *screenpad_backlight_device;
+	struct platform_device *platform_device;
+
+	struct led_classdev wlan_led;
+	int wlan_led_wk;
+	struct led_classdev tpd_led;
+	int tpd_led_wk;
+	struct led_classdev kbd_led;
+	int kbd_led_wk;
+	struct led_classdev lightbar_led;
+	int lightbar_led_wk;
+	struct led_classdev micmute_led;
+	struct led_classdev camera_led;
+	struct workqueue_struct *led_workqueue;
+	struct work_struct tpd_led_work;
+	struct work_struct wlan_led_work;
+	struct work_struct lightbar_led_work;
+
+	struct asus_rfkill wlan;
+	struct asus_rfkill bluetooth;
+	struct asus_rfkill wimax;
+	struct asus_rfkill wwan3g;
+	struct asus_rfkill gps;
+	struct asus_rfkill uwb;
+
+	int tablet_switch_event_code;
+	u32 tablet_switch_dev_id;
+	bool tablet_switch_inverted;
+
+	enum fan_type fan_type;
+	enum fan_type gpu_fan_type;
+	enum fan_type mid_fan_type;
+	int fan_pwm_mode;
+	int gpu_fan_pwm_mode;
+	int mid_fan_pwm_mode;
+	int agfn_pwm;
+
+	bool fan_boost_mode_available;
+	u8 fan_boost_mode_mask;
+	u8 fan_boost_mode;
+
+	bool egpu_enable_available;
+	bool dgpu_disable_available;
+	u32 gpu_mux_dev;
+
+	/* Tunables provided by ASUS for gaming laptops */
+	u32 ppt_pl2_sppt;
+	u32 ppt_pl1_spl;
+	u32 ppt_apu_sppt;
+	u32 ppt_platform_sppt;
+	u32 ppt_fppt;
+	u32 nv_dynamic_boost;
+	u32 nv_temp_target;
+
+	u32 kbd_rgb_dev;
+	bool kbd_rgb_state_available;
+
+	u8 throttle_thermal_policy_mode;
+	u32 throttle_thermal_policy_dev;
+
+	bool cpu_fan_curve_available;
+	bool gpu_fan_curve_available;
+	bool mid_fan_curve_available;
+	struct fan_curve_data custom_fan_curves[3];
+
+	struct platform_profile_handler platform_profile_handler;
+	bool platform_profile_support;
+
+	// The RSOC controls the maximum charging percentage.
+	bool battery_rsoc_available;
+
+	bool panel_overdrive_available;
+	u32 mini_led_dev_id;
+
+	struct hotplug_slot hotplug_slot;
+	struct mutex hotplug_lock;
+	struct mutex wmi_lock;
+	struct workqueue_struct *hotplug_workqueue;
+	struct work_struct hotplug_work;
+
+	bool fnlock_locked;
+
+	struct asus_wmi_debug debug;
+
+	struct asus_wmi_driver *driver;
+};
+
+/* Global to allow setting externally without requiring driver data */
+static bool use_ally_mcu_hack;
 
 #if IS_ENABLED(CONFIG_ASUS_WMI_DEPRECATED_ATTRS)
 static void asus_wmi_show_deprecated(void)
@@ -1285,6 +1426,44 @@ static DEVICE_ATTR_RW(nv_temp_target);
 #endif /* IS_ENABLED(CONFIG_ASUS_WMI_DEPRECATED_ATTRS) */
 
 /* Ally MCU Powersave ********************************************************/
+
+/*
+ * The HID driver needs to check MCU version and set this to false if the MCU FW
+ * version is >= the minimum requirements. New FW do not need the hacks.
+ */
+void set_ally_mcu_hack(bool enabled)
+{
+	use_ally_mcu_hack = enabled;
+	pr_debug("%s Ally MCU suspend quirk\n",
+		 enabled ? "Enabled" : "Disabled");
+}
+EXPORT_SYMBOL_NS_GPL(set_ally_mcu_hack, "ASUS_WMI");
+
+/*
+ * mcu_powersave should be enabled always, as it is fixed in MCU FW versions:
+ * - v313 for Ally X
+ * - v319 for Ally 1
+ * The HID driver checks MCU versions and so should set this if requirements match
+ */
+void set_ally_mcu_powersave(bool enabled)
+{
+	int result, err;
+
+	err = asus_wmi_set_devstate(ASUS_WMI_DEVID_MCU_POWERSAVE, enabled, &result);
+	if (err) {
+		pr_warn("Failed to set MCU powersave: %d\n", err);
+		return;
+	}
+	if (result > 1) {
+		pr_warn("Failed to set MCU powersave (result): 0x%x\n", result);
+		return;
+	}
+
+	pr_debug("%s MCU Powersave\n",
+		 enabled ? "Enabled" : "Disabled");
+}
+EXPORT_SYMBOL_NS_GPL(set_ally_mcu_powersave, "ASUS_WMI");
+
 #if IS_ENABLED(CONFIG_ASUS_WMI_DEPRECATED_ATTRS)
 static ssize_t mcu_powersave_show(struct device *dev,
 				   struct device_attribute *attr, char *buf)
@@ -4675,6 +4854,18 @@ static int asus_wmi_add(struct platform_device *pdev)
 	if (err)
 		goto fail_platform;
 
+	use_ally_mcu_hack = acpi_has_method(NULL, ASUS_USB0_PWR_EC0_CSEE)
+				&& dmi_check_system(asus_rog_ally_device);
+	if (use_ally_mcu_hack && dmi_match(DMI_BOARD_NAME, "RC71")) {
+		/*
+		 * These steps ensure the device is in a valid good state, this is
+		 * especially important for the Ally 1 after a reboot.
+		 */
+		acpi_execute_simple_method(NULL, ASUS_USB0_PWR_EC0_CSEE,
+					   ASUS_USB0_PWR_EC0_CSEE_ON);
+		msleep(ASUS_USB0_PWR_EC0_CSEE_WAIT);
+	}
+
 	/* ensure defaults for tunables */
 #if IS_ENABLED(CONFIG_ASUS_WMI_DEPRECATED_ATTRS)
 	asus->ppt_pl2_sppt = 5;
@@ -4688,7 +4879,6 @@ static int asus_wmi_add(struct platform_device *pdev)
 	asus->egpu_enable_available = asus_wmi_dev_is_present(asus, ASUS_WMI_DEVID_EGPU);
 	asus->dgpu_disable_available = asus_wmi_dev_is_present(asus, ASUS_WMI_DEVID_DGPU);
 	asus->kbd_rgb_state_available = asus_wmi_dev_is_present(asus, ASUS_WMI_DEVID_TUF_RGB_STATE);
-	asus->mcu_powersave_available = asus_wmi_dev_is_present(asus, ASUS_WMI_DEVID_MCU_POWERSAVE);
 
 	if (asus_wmi_dev_is_present(asus, ASUS_WMI_DEVID_MINI_LED_MODE))
 		asus->mini_led_dev_id = ASUS_WMI_DEVID_MINI_LED_MODE;
@@ -4920,10 +5110,35 @@ static int asus_hotk_restore(struct device *device)
 	return 0;
 }
 
+static void asus_ally_s2idle_restore(void)
+{
+	if (use_ally_mcu_hack) {
+		acpi_execute_simple_method(NULL, ASUS_USB0_PWR_EC0_CSEE,
+					   ASUS_USB0_PWR_EC0_CSEE_ON);
+		msleep(ASUS_USB0_PWR_EC0_CSEE_WAIT);
+	}
+}
+
+static int asus_hotk_prepare(struct device *device)
+{
+	if (use_ally_mcu_hack) {
+		acpi_execute_simple_method(NULL, ASUS_USB0_PWR_EC0_CSEE,
+					   ASUS_USB0_PWR_EC0_CSEE_OFF);
+		msleep(ASUS_USB0_PWR_EC0_CSEE_WAIT);
+	}
+	return 0;
+}
+
+/* Use only for Ally devices due to the wake_on_ac */
+static struct acpi_s2idle_dev_ops asus_ally_s2idle_dev_ops = {
+	.restore = asus_ally_s2idle_restore,
+};
+
 static const struct dev_pm_ops asus_pm_ops = {
 	.thaw = asus_hotk_thaw,
 	.restore = asus_hotk_restore,
 	.resume = asus_hotk_resume,
+	.prepare = asus_hotk_prepare,
 };
 
 /* Registration ***************************************************************/
@@ -4949,6 +5164,10 @@ static int asus_wmi_probe(struct platform_device *pdev)
 		if (ret)
 			return ret;
 	}
+
+	ret = acpi_register_lps0_dev(&asus_ally_s2idle_dev_ops);
+	if (ret)
+		pr_warn("failed to register LPS0 sleep handler in asus-wmi\n");
 
 	return asus_wmi_add(pdev);
 }
@@ -4982,6 +5201,7 @@ EXPORT_SYMBOL_GPL(asus_wmi_register_driver);
 
 void asus_wmi_unregister_driver(struct asus_wmi_driver *driver)
 {
+	acpi_unregister_lps0_dev(&asus_ally_s2idle_dev_ops);
 	platform_device_unregister(driver->platform_device);
 	platform_driver_unregister(&driver->platform_driver);
 	used = false;

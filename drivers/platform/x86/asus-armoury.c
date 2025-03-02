@@ -82,8 +82,6 @@ struct rog_tunables {
 	u32 nv_tgp;
 };
 
-static const struct class *fw_attr_class;
-
 struct asus_armoury_priv {
 	struct device *fw_attr_dev;
 	struct kset *fw_attr_kset;
@@ -95,6 +93,8 @@ struct asus_armoury_priv {
 
 	struct mutex mutex;
 };
+
+static const struct class *fw_attr_class;
 
 static struct asus_armoury_priv asus_armoury = {
 	.mutex = __MUTEX_INITIALIZER(asus_armoury.mutex)
@@ -976,9 +976,18 @@ static bool init_rog_tunables(struct rog_tunables *rog)
 		}
 	} else {
 		limits = power_data->dc_data;
-		if (!limits && !power_data->ac_data) {
-			pr_err("No power limits available\n");
-			return false;
+		if (!limits) {
+			rog->ppt_pl1_spl = 0;
+			rog->ppt_pl2_sppt = 0;
+			rog->ppt_pl3_fppt = 0;
+			rog->ppt_apu_sppt = 0;
+			rog->ppt_platform_sppt = 0;
+			rog->nv_dynamic_boost = 0;
+			rog->nv_temp_target = 0;
+			rog->nv_tgp = 0;
+
+			pr_warn("No DC power limits available, initializing to 0\n");
+			return true;
 		}
 	}
 

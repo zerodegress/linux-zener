@@ -35,10 +35,6 @@
 #define ROG_ALLY_X_MIN_MCU 313
 #define ROG_ALLY_MIN_MCU 319
 
-#define ROG_ALLY_CFG_INTF_IN 0x83
-#define ROG_ALLY_CFG_INTF_OUT 0x04
-#define ROG_ALLY_X_INTF_IN 0x87
-
 #define FEATURE_KBD_LED_REPORT_ID1 0x5d
 #define FEATURE_KBD_LED_REPORT_ID2 0x5e
 
@@ -449,9 +445,20 @@ static int asus_dev_set_report(struct hid_device *hdev, const u8 *buf, size_t le
 	return ret;
 }
 
-static int asus_dev_get_report(struct hid_device *hdev, u8 *out_buf, size_t out_buf_size)
+/**
+ * asus_dev_get_report - send get report request to device.
+ *
+ * @hdev: hid device
+ * @out: buffer to write output data in to
+ * @len: length the output buffer provided
+ *
+ * Return: count of data transferred, negative if error
+ *
+ * Same behavior as hid_hw_raw_request.
+ */
+static int asus_dev_get_report(struct hid_device *hdev, u8 *out, size_t len)
 {
-	return hid_hw_raw_request(hdev, FEATURE_REPORT_ID, out_buf, out_buf_size,
+	return hid_hw_raw_request(hdev, FEATURE_REPORT_ID, out, len,
 		HID_FEATURE_REPORT, HID_REQ_GET_REPORT);
 }
 
@@ -1281,12 +1288,12 @@ static ssize_t gamepad_mode_store(struct device *dev, struct device_attribute *a
 
 DEVICE_ATTR_RW(gamepad_mode);
 
-static ssize_t gamepad_mode_show(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t mcu_version_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	return sysfs_emit(buf, "%d\n", drvdata.version);
+	return sysfs_emit(buf, "%d\n", drvdata.mcu_version);
 }
 
-+DEVICE_ATTR_RO(mcu_version);
+DEVICE_ATTR_RO(mcu_version);
 
 /* ROOT LEVEL ATTRS *******************************************************************************/
 static struct attribute *gamepad_device_attrs[] = {
@@ -1988,88 +1995,92 @@ static int ally_raw_event(struct hid_device *hdev, struct hid_report *report, u8
 /*
  * We don't care about any other part of the string except the version section.
  * Example strings: FGA80100.RC72LA.312_T01, FGA80100.RC71LS.318_T01
+ * The bytes "5a 05 03 31 00 1a 13" and possibly more come before the version
+ * string, and there may be additional bytes after the version string such as
+ * "75 00 74 00 65 00" or a postfix such as "_T01"
  */
 static int mcu_parse_version_string(const u8 *response, size_t response_size)
 {
-	int dot_count = 0;
-	size_t i;
+	const u8 *end = response + response_size;
+	const u8 *p = response;
+	int dots, err, version;
+	char buf[4];
 
-	// Look for the second '.' to identify the start of the version
-	for (i = 0; i < response_size; i++) {
-		if (response[i] == '.') {
-			dot_count++;
-			if (dot_count == 2) {
-				int version =
-					simple_strtol((const char *)&response[i + 1], NULL, 10);
-				return (version >= 0) ? version : -EINVAL;
-			}
-		}
+	dots = 0;
+	while (p < end && dots < 2) {
+		if (*p++ == '.')
+			dots++;
 	}
 
-	return -EINVAL;
+	if (dots != 2 || p >= end || (p + 3) >= end)
+		return -EINVAL;
+
+	memcpy(buf, p, 3);
+	buf[3] = '\0';
+
+	err = kstrtoint(buf, 10, &version);
+	if (err || version < 0)
+		return -EINVAL;
+
+	return version;
 }
 
 static int mcu_request_version(struct hid_device *hdev)
 {
+	u8 *response __free(kfree) = kzalloc(ROG_ALLY_REPORT_SIZE, GFP_KERNEL);
 	const u8 request[] = { 0x5a, 0x05, 0x03, 0x31, 0x00, 0x20 };
-	u8 *response;
 	int ret;
 
-	response = kzalloc(FEATURE_ROG_ALLY_REPORT_SIZE, GFP_KERNEL);
 	if (!response)
 		return -ENOMEM;
 
 	ret = asus_dev_set_report(hdev, request, sizeof(request));
 	if (ret < 0)
-		goto out;
+		return ret;
 
-	ret = asus_dev_get_report(hdev, response, FEATURE_ROG_ALLY_REPORT_SIZE);
+	ret = hid_hw_raw_request(hdev, FEATURE_REPORT_ID, response,
+				ROG_ALLY_REPORT_SIZE, HID_FEATURE_REPORT,
+				HID_REQ_GET_REPORT);
 	if (ret < 0)
-		goto out;
+		return ret;
 
-	ret = mcu_parse_version_string(response, FEATURE_ROG_ALLY_REPORT_SIZE);
-out:
-	if (ret < 0)
-		hid_err(hdev, "Failed to get MCU version: %d\n", ret);
-	kfree(response);
+	ret = mcu_parse_version_string(response, ROG_ALLY_REPORT_SIZE);
+	if (ret < 0) {
+		pr_err("Failed to parse MCU version: %d\n", ret);
+		print_hex_dump(KERN_ERR, "MCU: ", DUMP_PREFIX_NONE,
+			      16, 1, response, ROG_ALLY_REPORT_SIZE, false);
+	}
+
 	return ret;
 }
 
-static void mcu_maybe_warn_version(struct hid_device *hdev, int idProduct)
+static void validate_mcu_fw_version(struct hid_device *hdev, int idProduct)
 {
 	int min_version, version;
-	struct asus_wmi *asus;
-	struct device *dev;
 
-	min_version = ROG_ALLY_X_MIN_MCU;
 	version = mcu_request_version(hdev);
-	drvdata.version = version;
-	if (version) {
-		switch (idProduct) {
-		case USB_DEVICE_ID_ASUSTEK_ROG_NKEY_ALLY:
-			min_version = ROG_ALLY_MIN_MCU;
-			break;
-		case USB_DEVICE_ID_ASUSTEK_ROG_NKEY_ALLY_X:
-			min_version = ROG_ALLY_X_MIN_MCU;
-			break;
-		}
+	if (version < 0)
+		return;
+
+	switch (idProduct) {
+	case USB_DEVICE_ID_ASUSTEK_ROG_NKEY_ALLY:
+		min_version = ROG_ALLY_MIN_MCU;
+		break;
+	case USB_DEVICE_ID_ASUSTEK_ROG_NKEY_ALLY_X:
+		min_version = ROG_ALLY_X_MIN_MCU;
+		break;
+	default:
+		min_version = 0;
 	}
 
-	hid_info(hdev, "Ally device MCU version: %d\n", version);
+	drvdata.mcu_version = version;
 	if (version < min_version) {
 		hid_warn(hdev,
-			 "The MCU version must be %d or greater\n"
-			 "Please update your MCU with official ASUS firmware release\n",
-			 min_version);
-		/* Get the asus platform device */
-		dev = bus_find_device_by_name(&platform_bus_type, NULL, "asus-nb-wmi");
-		if (dev) {
-			asus = dev_get_drvdata(dev);
-			/* Do not show the powersave attribute if MCU version too low */
-			if (asus)
-				asus->mcu_powersave_available = false;
-			put_device(dev);
-		}
+			"The MCU firmware version must be %d or greater to avoid issues with suspend.\n",
+			min_version);
+	} else {
+		set_ally_mcu_hack(false);
+		set_ally_mcu_powersave(true);
 	}
 }
 
@@ -2133,7 +2144,7 @@ static int ally_hid_probe(struct hid_device *hdev, const struct hid_device_id *_
 
 	/* This should almost always exist */
 	if (ep == ROG_ALLY_CFG_INTF_IN) {
-		mcu_maybe_warn_version(hdev, idProduct);
+		validate_mcu_fw_version(hdev, idProduct);
 
 		drvdata.led_rgb_dev = ally_rgb_create(hdev);
 		if (IS_ERR(drvdata.led_rgb_dev))
@@ -2194,7 +2205,15 @@ static void ally_hid_remove(struct hid_device *hdev)
 
 static int ally_hid_resume(struct hid_device *hdev)
 {
-	ally_rgb_resume();
+	struct ally_gamepad_cfg *ally_cfg = drvdata.gamepad_cfg;
+	int err;
+
+	if (!ally_cfg)
+		return 0;
+
+	err = _gamepad_apply_all(hdev, ally_cfg);
+	if (err)
+		return err;
 
 	return 0;
 }
@@ -2208,7 +2227,7 @@ static int ally_hid_reset_resume(struct hid_device *hdev)
 	ally_hid_init(hdev);
 	ally_rgb_resume();
 
-	return 0;
+	return ally_hid_resume(hdev);
 }
 
 static int ally_pm_thaw(struct device *dev)
@@ -2235,18 +2254,19 @@ static const struct dev_pm_ops ally_pm_ops = {
 
 MODULE_DEVICE_TABLE(hid, rog_ally_devices);
 
-static struct hid_driver
-	rog_ally_cfg = { .name = "asus_rog_ally",
-			 .id_table = rog_ally_devices,
-			 .probe = ally_hid_probe,
-			 .remove = ally_hid_remove,
-			 .raw_event = ally_raw_event,
-			 /* HID is the better place for resume functions, not pm_ops */
-			 .resume = ally_hid_resume,
-			 .reset_resume = ally_hid_reset_resume,
-			 .driver = {
-				 .pm = &ally_pm_ops,
-			 } };
+static struct hid_driver rog_ally_cfg = { .name = "asus_rog_ally",
+		.id_table = rog_ally_devices,
+		.probe = ally_hid_probe,
+		.remove = ally_hid_remove,
+		.raw_event = ally_raw_event,
+		/* HID is the better place for resume functions, not pm_ops */
+		.resume = ally_hid_resume,
+		/* ALLy 1 requires this to reset device state correctly */
+		.reset_resume = ally_hid_reset_resume,
+		.driver = {
+			.pm = &ally_pm_ops,
+		}
+};
 
 static int __init rog_ally_init(void)
 {
@@ -2261,6 +2281,7 @@ static void __exit rog_ally_exit(void)
 module_init(rog_ally_init);
 module_exit(rog_ally_exit);
 
+MODULE_IMPORT_NS("ASUS_WMI");
 MODULE_AUTHOR("Luke D. Jones");
 MODULE_DESCRIPTION("HID Driver for ASUS ROG Ally gamepad configuration.");
 MODULE_LICENSE("GPL");

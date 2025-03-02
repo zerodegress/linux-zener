@@ -8,6 +8,10 @@
 #include <linux/hid.h>
 #include <linux/types.h>
 
+#define ROG_ALLY_CFG_INTF_IN 0x83
+#define ROG_ALLY_CFG_INTF_OUT 0x04
+#define ROG_ALLY_X_INTF_IN 0x87
+
 /*
  * the xpad_mode is used inside the mode setting packet and is used
  * for indexing (xpad_mode - 1)
