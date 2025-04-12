@@ -643,7 +643,7 @@ out:
 	return ret;
 }
 
-#ifdef CONFIG_SMP
+#if defined(CONFIG_SMP) && !defined(CONFIG_SCHED_ALT)
 /*
  * Helper routine for generate_sched_domains().
  * Do cpusets a, b have overlapping effective cpus_allowed masks?
@@ -954,10 +954,12 @@ static void dl_update_tasks_root_domain(struct cpuset *cs)
 	css_task_iter_end(&it);
 }
 
-static void dl_rebuild_rd_accounting(void)
+void dl_rebuild_rd_accounting(void)
 {
 	struct cpuset *cs = NULL;
 	struct cgroup_subsys_state *pos_css;
+	int cpu;
+	u64 cookie = ++dl_cookie;
 
 	lockdep_assert_held(&cpuset_mutex);
 	lockdep_assert_cpus_held();
@@ -965,11 +967,12 @@ static void dl_rebuild_rd_accounting(void)
 
 	rcu_read_lock();
 
-	/*
-	 * Clear default root domain DL accounting, it will be computed again
-	 * if a task belongs to it.
-	 */
-	dl_clear_root_domain(&def_root_domain);
+	for_each_possible_cpu(cpu) {
+		if (dl_bw_visited(cpu, cookie))
+			continue;
+
+		dl_clear_root_domain_cpu(cpu);
+	}
 
 	cpuset_for_each_descendant_pre(cs, pos_css, &top_cpuset) {
 
@@ -994,10 +997,9 @@ static void
 partition_and_rebuild_sched_domains(int ndoms_new, cpumask_var_t doms_new[],
 				    struct sched_domain_attr *dattr_new)
 {
-	mutex_lock(&sched_domains_mutex);
+	sched_domains_mutex_lock();
 	partition_sched_domains_locked(ndoms_new, doms_new, dattr_new);
-	dl_rebuild_rd_accounting();
-	mutex_unlock(&sched_domains_mutex);
+	sched_domains_mutex_unlock();
 }
 
 /*
@@ -1063,7 +1065,7 @@ void rebuild_sched_domains_locked(void)
 	/* Have scheduler rebuild the domains */
 	partition_and_rebuild_sched_domains(ndoms, doms, attr);
 }
-#else /* !CONFIG_SMP */
+#else /* !CONFIG_SMP || CONFIG_SCHED_ALT */
 void rebuild_sched_domains_locked(void)
 {
 }
@@ -1081,6 +1083,13 @@ void rebuild_sched_domains(void)
 	cpus_read_lock();
 	rebuild_sched_domains_cpuslocked();
 	cpus_read_unlock();
+}
+
+void cpuset_reset_sched_domains(void)
+{
+	mutex_lock(&cpuset_mutex);
+	partition_sched_domains(1, NULL, NULL);
+	mutex_unlock(&cpuset_mutex);
 }
 
 /**
@@ -2949,12 +2958,15 @@ static int cpuset_can_attach(struct cgroup_taskset *tset)
 				goto out_unlock;
 		}
 
+#ifndef CONFIG_SCHED_ALT
 		if (dl_task(task)) {
 			cs->nr_migrate_dl_tasks++;
 			cs->sum_migrate_dl_bw += task->dl.dl_bw;
 		}
+#endif
 	}
 
+#ifndef CONFIG_SCHED_ALT
 	if (!cs->nr_migrate_dl_tasks)
 		goto out_success;
 
@@ -2975,6 +2987,7 @@ static int cpuset_can_attach(struct cgroup_taskset *tset)
 	}
 
 out_success:
+#endif
 	/*
 	 * Mark attach is in progress.  This makes validate_change() fail
 	 * changes which zero cpus/mems_allowed.
@@ -2996,12 +3009,14 @@ static void cpuset_cancel_attach(struct cgroup_taskset *tset)
 	mutex_lock(&cpuset_mutex);
 	dec_attach_in_progress_locked(cs);
 
+#ifndef CONFIG_SCHED_ALT
 	if (cs->nr_migrate_dl_tasks) {
 		int cpu = cpumask_any(cs->effective_cpus);
 
 		dl_bw_free(cpu, cs->sum_migrate_dl_bw);
 		reset_migrate_dl_data(cs);
 	}
+#endif
 
 	mutex_unlock(&cpuset_mutex);
 }

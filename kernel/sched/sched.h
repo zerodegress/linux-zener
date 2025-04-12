@@ -5,6 +5,10 @@
 #ifndef _KERNEL_SCHED_SCHED_H
 #define _KERNEL_SCHED_SCHED_H
 
+#ifdef CONFIG_SCHED_ALT
+#include "alt_sched.h"
+#else
+
 #include <linux/sched/affinity.h>
 #include <linux/sched/autogroup.h>
 #include <linux/sched/cpufreq.h>
@@ -998,7 +1002,7 @@ struct root_domain {
 	 * Also, some corner cases, like 'wrap around' is dangerous, but given
 	 * that u64 is 'big enough'. So that shouldn't be a concern.
 	 */
-	u64 visit_gen;
+	u64 visit_cookie;
 
 #ifdef HAVE_RT_PUSH_IPI
 	/*
@@ -4003,4 +4007,9 @@ void sched_enq_and_set_task(struct sched_enq_and_set_ctx *ctx);
 
 #include "ext.h"
 
+static inline int task_running_nice(struct task_struct *p)
+{
+	return (task_nice(p) > 0);
+}
+#endif /* !CONFIG_SCHED_ALT */
 #endif /* _KERNEL_SCHED_SCHED_H */

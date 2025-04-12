@@ -3,9 +3,18 @@
  * Scheduler topology setup/handling methods
  */
 
+#ifndef CONFIG_SCHED_ALT
 #include <linux/bsearch.h>
 
 DEFINE_MUTEX(sched_domains_mutex);
+void sched_domains_mutex_lock(void)
+{
+	mutex_lock(&sched_domains_mutex);
+}
+void sched_domains_mutex_unlock(void)
+{
+	mutex_unlock(&sched_domains_mutex);
+}
 
 /* Protected by sched_domains_mutex: */
 static cpumask_var_t sched_domains_tmpmask;
@@ -560,7 +569,7 @@ static int init_rootdomain(struct root_domain *rd)
 	rd->rto_push_work = IRQ_WORK_INIT_HARD(rto_push_irq_work_func);
 #endif
 
-	rd->visit_gen = 0;
+	rd->visit_cookie = 0;
 	init_dl_bw(&rd->dl_bw);
 	if (cpudl_init(&rd->cpudl) != 0)
 		goto free_rto_mask;
@@ -1459,8 +1468,10 @@ static void asym_cpu_capacity_scan(void)
  */
 
 static int default_relax_domain_level = -1;
+#endif /* CONFIG_SCHED_ALT */
 int sched_domain_level_max;
 
+#ifndef CONFIG_SCHED_ALT
 static int __init setup_relax_domain_level(char *str)
 {
 	if (kstrtoint(str, 0, &default_relax_domain_level))
@@ -1693,6 +1704,7 @@ sd_init(struct sched_domain_topology_level *tl,
 
 	return sd;
 }
+#endif /* CONFIG_SCHED_ALT */
 
 /*
  * Topology list, bottom-up.
@@ -1729,6 +1741,7 @@ void __init set_sched_topology(struct sched_domain_topology_level *tl)
 	sched_domain_topology_saved = NULL;
 }
 
+#ifndef CONFIG_SCHED_ALT
 #ifdef CONFIG_NUMA
 
 static const struct cpumask *sd_numa_mask(int cpu)
@@ -2783,6 +2796,7 @@ match3:
 	ndoms_cur = ndoms_new;
 
 	update_sched_domain_debugfs();
+	dl_rebuild_rd_accounting();
 }
 
 /*
@@ -2791,7 +2805,32 @@ match3:
 void partition_sched_domains(int ndoms_new, cpumask_var_t doms_new[],
 			     struct sched_domain_attr *dattr_new)
 {
-	mutex_lock(&sched_domains_mutex);
+	sched_domains_mutex_lock();
 	partition_sched_domains_locked(ndoms_new, doms_new, dattr_new);
-	mutex_unlock(&sched_domains_mutex);
+	sched_domains_mutex_unlock();
 }
+#else /* CONFIG_SCHED_ALT */
+DEFINE_STATIC_KEY_FALSE(sched_asym_cpucapacity);
+
+void partition_sched_domains(int ndoms_new, cpumask_var_t doms_new[],
+			     struct sched_domain_attr *dattr_new)
+{}
+
+#ifdef CONFIG_NUMA
+int sched_numa_find_closest(const struct cpumask *cpus, int cpu)
+{
+	return best_mask_cpu(cpu, cpus);
+}
+
+int sched_numa_find_nth_cpu(const struct cpumask *cpus, int cpu, int node)
+{
+	return cpumask_nth(cpu, cpus);
+}
+
+const struct cpumask *sched_numa_hop_mask(unsigned int node, unsigned int hops)
+{
+	return ERR_PTR(-EOPNOTSUPP);
+}
+EXPORT_SYMBOL_GPL(sched_numa_hop_mask);
+#endif /* CONFIG_NUMA */
+#endif
