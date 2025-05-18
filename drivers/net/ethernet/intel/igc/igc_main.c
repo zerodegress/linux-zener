@@ -5021,8 +5021,8 @@ static int igc_sw_init(struct igc_adapter *adapter)
 	return 0;
 }
 
-void igc_set_queue_napi(struct igc_adapter *adapter, int vector,
-			struct napi_struct *napi)
+static void igc_set_queue_napi(struct igc_adapter *adapter, int vector,
+			       struct napi_struct *napi)
 {
 	struct igc_q_vector *q_vector = adapter->q_vector[vector];
 
@@ -7230,6 +7230,7 @@ static int igc_probe(struct pci_dev *pdev,
 
 err_register:
 	igc_release_hw_control(adapter);
+	igc_ptp_stop(adapter);
 err_eeprom:
 	if (!igc_check_reset_block(hw))
 		igc_reset_phy(hw);
